@@ -1,9 +1,9 @@
-package com.ecom.productcatalogservice;
+package com.ecom.orderservice;
 
 import org.springframework.boot.test.context.SpringBootTest;
 
 @SpringBootTest
-class ProductCatalogServiceApplicationTests {
+class OrderServiceApplicationTests {
 
     //@Test
     void contextLoads() {

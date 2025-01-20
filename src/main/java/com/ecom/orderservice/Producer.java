@@ -1,4 +1,4 @@
-package com.ecom.productcatalogservice;
+package com.ecom.orderservice;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -8,7 +8,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
-import java.time.Instant;
 import java.time.LocalTime;
 import java.util.Random;
 
@@ -16,7 +15,7 @@ import java.util.Random;
 public class Producer
 {
     private static final Logger logger = LoggerFactory.getLogger(Producer.class);
-    private static final String TOPIC = "product-topic";
+    private static final String TOPIC = "order-topic";
 
     @Autowired //DEPENDENCY INJECTION PROMISE FULFILLED AT RUNTIME
     private KafkaTemplate<String, String> kafkaTemplate ;
@@ -41,4 +40,15 @@ public class Producer
         this.kafkaTemplate.send(TOPIC,datum);
     }
 
+    public void publishOrderPlaceMessage(OrderRequest request, SagaState sagaState) throws JsonProcessingException {
+        OrderEvent event = new OrderEvent(request.getOrderId(), "ORDER_CREATED", request,sagaState);
+        String orderEventJson =  objectMapper.writeValueAsString(event);
+        kafkaTemplate.send("order-topic", request.getOrderId(), orderEventJson);
+    }
+
+    public void publishOrderCompletionMessage(String orderId,String orderStatus,SagaState sagaState) throws JsonProcessingException {
+        OrderEvent event = new OrderEvent(orderId, orderStatus, null,sagaState);
+        String orderEventJson =  objectMapper.writeValueAsString(event);
+        kafkaTemplate.send("order-topic", orderId, orderEventJson);
+    }
 }

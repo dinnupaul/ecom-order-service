@@ -1,4 +1,4 @@
-package com.ecom.productcatalogservice;
+package com.ecom.orderservice;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
