@@ -46,7 +46,14 @@ public class OrderConsumer
             redisTemplate.opsForValue().set("ORDER_" + orderRequest.getOrderStatus(), sagaState); **/
 
            //  redisTemplate.delete(redisKey); // Clean up after success
-        } /*** else {
+        } else{
+            orderController.rollbackOrder(paymentEvent.getOrderRequest(),paymentEvent.getSagaState());
+
+        }
+
+
+
+        /*** else {
             // Retry or handle failure logic
             orderState.setOrderStatus("RETRY");
             // Optionally re-publish order event for retry

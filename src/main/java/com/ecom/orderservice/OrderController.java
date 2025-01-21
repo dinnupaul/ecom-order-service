@@ -71,7 +71,7 @@ public class OrderController
                     request.getProductId(), request.getQuantity(),"PENDING");
             orderRepository.save(order);
             logger.info("Create initial order state");
-
+            request.setOrderStatus("ORDER_CREATED");
             SagaState sagaState = new SagaState("ORDER_CREATED", request);
             sagaState.setOrderRequest(request);
             sagaState.getOrderRequest().setOrderId(orderId);
@@ -100,14 +100,21 @@ public class OrderController
 
             if("ORDER_CONFIRMED".equals(sagaState.getCurrentState())){
                 return ResponseEntity.ok("Order placed successfully: " + orderId);
+            }else if("ORDER_FAILED".equals(sagaState.getCurrentState())){
+                return ResponseEntity.ok("Order request {} failed. Please try placing new order ");
+            }else if("INVENTORY_FAILED".equals(sagaState.getCurrentState()) || "PAYMENT_FAILED".equals(sagaState.getCurrentState()) ){
+                // Retry failed steps
+                boolean isRetrySuccessful = retryFailedSteps(orderId);
+                if (isRetrySuccessful) {
+                    return ResponseEntity.ok("Retrying for order ID: " + orderId);
+                } else if (!isRetrySuccessful && sagaState.getRetryCount()>=3){
+                    rollbackOrder(sagaState.getOrderRequest(),sagaState);
+                    return ResponseEntity.ok("Order Failed: " + orderId);
+                } else {
+                    return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Retry failed for order ID: " + orderId);
+                }
             }
-            // Retry failed steps
-            boolean isRetrySuccessful = retryFailedSteps(orderId);
-            if (isRetrySuccessful) {
-                return ResponseEntity.ok("Retrying for order ID: " + orderId);
-            } else {
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Retry failed for order ID: " + orderId);
-            }
+
         }
         //String sessionId = UUID.randomUUID().toString();
        // SagaState sagaState = (SagaState) redisTemplate.opsForValue().get(sessionId);
@@ -150,15 +157,23 @@ public class OrderController
        /**** logger.info("Publish initial order creation event");
         producer.publishOrderPlaceMessage(request);
 ***/
-
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Retry failed for order ID: " + orderId);
 
     }
 
     public boolean retryFailedSteps(String orderId) throws JsonProcessingException {
+        boolean canRetry = false;
         // Fetch state from Redis
         SagaState sagaState = (SagaState) redisTemplate.opsForValue().get("ORDER_" + orderId);
-        logger.info("Publish initial order creation event");
-        producer.publishOrderPlaceMessage(sagaState!=null?sagaState.getOrderRequest():null,sagaState);
+
+        if(sagaState!=null && sagaState.getRetryCount()<3) {
+            canRetry = true;
+            sagaState.setRetryCount(sagaState.getRetryCount()+1);
+
+            logger.info("Publish initial order creation event");
+            producer.publishOrderPlaceMessage(sagaState.getOrderRequest(), sagaState);
+
+        }
 
        /*** // Retry inventory check if not confirmed
         if (!sagaState.is) {
@@ -175,12 +190,12 @@ public class OrderController
         // All steps successful
         sagaState.setStatus("COMPLETED");
         redisTemplate.opsForValue().set("ORDER_" + orderId, sagaState);***/
-        return true;
+        return canRetry ;
     }
 
     public void confirmOrder(OrderRequest orderRequest,SagaState sagaState) {
         Order order = orderRepository.findById(orderRequest.getOrderId()).orElseThrow(() -> new RuntimeException("Order not found"));
-        order.setOrderStatus("CONFIRMED");
+        order.setOrderStatus("ORDER_CONFIRMED");
         orderRepository.save(order); // Persist success
         sagaState.updateStepStatus("Order", "ORDER_CONFIRMED");
         sagaState.setCurrentState("ORDER_CONFIRMED");
@@ -189,11 +204,19 @@ public class OrderController
      //   redisTemplate.opsForValue().set("ORDER_" + orderId, order);
     }
 
-    public void rollbackOrder(String orderId) {
-        Order order = orderRepository.findById(orderId).orElseThrow(() -> new RuntimeException("Order not found"));
-        order.setOrderStatus("FAILED");
-        orderRepository.save(order); // Persist failure
-        redisTemplate.delete("ORDER_" + orderId);
+    public void rollbackOrder(OrderRequest orderRequest,SagaState sagaState) {
+
+        Order order = orderRepository.findById(orderRequest.getOrderId()).orElseThrow(() -> new RuntimeException("Order not found"));
+        if(sagaState!=null && sagaState.getRetryCount()>3) {
+            order.setOrderStatus("ORDER_FAILED");
+            orderRepository.save(order);
+            sagaState.updateStepStatus("Order", "ORDER_FAILED");
+            sagaState.setCurrentState("ORDER_FAILED");
+        }
+         // Persist failure
+
+        redisTemplate.opsForValue().set("ORDER_" + orderRequest.getOrderId(), sagaState);
+       // redisTemplate.delete("ORDER_" + orderRequest.getOrderId());
     }
 
     public void publishOrderCompletionMessage(String orderId,String orderStatus) throws JsonProcessingException {
