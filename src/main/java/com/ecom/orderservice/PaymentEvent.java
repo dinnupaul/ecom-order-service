@@ -12,4 +12,5 @@ public class PaymentEvent {
     private String paymentStatus;
     private OrderRequest orderRequest;
     private SagaState sagaState;
+    private String traceId;
 }

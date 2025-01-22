@@ -15,4 +15,5 @@ public class OrderEvent implements Serializable {
     private String eventType;
     private OrderRequest request;
     private SagaState sagaState;
+    private String traceId;
 }

@@ -4,8 +4,11 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.messaging.Message;
+import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalTime;
@@ -41,13 +44,19 @@ public class Producer
     }
 
     public void publishOrderPlaceMessage(OrderRequest request, SagaState sagaState) throws JsonProcessingException {
-        OrderEvent event = new OrderEvent(request.getOrderId(), "ORDER_CREATED", request,sagaState);
+        String traceId = MDC.get("traceId");
+        OrderEvent event = new OrderEvent(request.getOrderId(), "ORDER_CREATED", request,sagaState,traceId);
         String orderEventJson =  objectMapper.writeValueAsString(event);
+        // Send message with trace ID as header
+        Message<String> message = MessageBuilder.withPayload(orderEventJson)
+                .setHeader("traceId", traceId) // Add trace ID to header
+                .build();
         kafkaTemplate.send("order-topic", request.getOrderId(), orderEventJson);
     }
 
     public void publishOrderCompletionMessage(String orderId,String orderStatus,SagaState sagaState) throws JsonProcessingException {
-        OrderEvent event = new OrderEvent(orderId, orderStatus, null,sagaState);
+        String traceId = MDC.get("traceId");
+        OrderEvent event = new OrderEvent(orderId, orderStatus, null,sagaState,traceId);
         String orderEventJson =  objectMapper.writeValueAsString(event);
         kafkaTemplate.send("order-topic", orderId, orderEventJson);
     }

@@ -5,6 +5,7 @@ import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpHeaders;
@@ -43,16 +44,24 @@ public class OrderController
     public ResponseEntity<?> placeOrder(@RequestBody OrderRequest request,
                                         @CookieValue(value = "orderId", required = false) String orderId,
                                         HttpServletResponse response) throws JsonProcessingException {
-        // Create initial order state
+        // Generate or extract trace ID
+        String traceId = MDC.get("traceId");
+        if (traceId == null) {
+            traceId = UUID.randomUUID().toString();
+            MDC.put("traceId", traceId); // Add trace ID to MDC for logging
+        }
+        logger.info("Processing order with trace ID: {}", traceId);
 
+        // Create initial order state
         if (orderId == null) {
+            logger.info("Create initial order state in  order service");
             orderId = UUID.randomUUID().toString();
 
             logger.info("Create initial order DB persistence with pending status");
             Order order = new Order(orderId, request.getCustomerId(),
                     request.getProductId(), request.getQuantity(),"PENDING");
             orderRepository.save(order);
-            logger.info("Create initial order state");
+            logger.info("save initial order state in DB");
             request.setOrderStatus("ORDER_CREATED");
             SagaState sagaState = new SagaState("ORDER_CREATED", request);
             sagaState.setOrderRequest(request);
@@ -61,6 +70,7 @@ public class OrderController
             sagaState.updateStepStatus("Inventory", "PENDING");
             sagaState.updateStepStatus("Payment", "PENDING");
             sagaState.setCurrentState("ORDER_CREATED");
+            logger.info("update sagaState in cache from order service");
             redisTemplate.opsForValue().set("ORDER_" + orderId, sagaState);
 
             // Set cookie for orderId
@@ -78,21 +88,32 @@ public class OrderController
                     .header("Set-Cookie", cookie.toString())
                     .body("Order placed and processing initiated");
         }else{
+            String newTraceId = UUID.randomUUID().toString();
+            MDC.put("traceId", newTraceId);
+           // MDC.put("parentTraceId", originalTraceId);
+
+            logger.info("Followup call in  order service, : initial order state exists");
             SagaState sagaState = (SagaState) redisTemplate.opsForValue().get("ORDER_" + orderId);
 
             if("ORDER_CONFIRMED".equals(sagaState.getCurrentState())){
+                logger.info("ORDER_CONFIRMED flow in  order service");
                 return ResponseEntity.ok("Order placed successfully: " + orderId);
             }else if("ORDER_FAILED".equals(sagaState.getCurrentState())){
+                logger.info("ORDER_FAILED flow in  order service");
                 return ResponseEntity.ok("Order request {} failed. Please try placing new order ");
             }else if("INVENTORY_FAILED".equals(sagaState.getCurrentState()) || "PAYMENT_FAILED".equals(sagaState.getCurrentState()) ){
                 // Retry failed steps
+                logger.info("INVENTORY_FAILED/PAYMENT_FAILED flow in  order service, Retry failed steps");
                 boolean isRetrySuccessful = retryFailedSteps(orderId);
                 if (isRetrySuccessful) {
+                    logger.info(" Retry initiated in order service ");
                     return ResponseEntity.ok("Retrying for order ID: " + orderId);
                 } else if (!isRetrySuccessful && sagaState.getRetryCount()>=3){
+                    logger.info(" Retry failed and rollback initiated in order service ");
                     rollbackOrder(sagaState.getOrderRequest(),sagaState);
                     return ResponseEntity.ok("Order Failed: " + orderId);
                 } else {
+                    logger.info(" Retry failed bad request in order service ");
                     return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Retry failed for order ID: " + orderId);
                 }
             }

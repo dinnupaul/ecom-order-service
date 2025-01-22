@@ -3,6 +3,7 @@ package com.ecom.orderservice;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -33,18 +34,15 @@ public class OrderConsumer
         logger.info(String.format("#### -> about to consume payment topic"));
         PaymentEvent paymentEvent = mapper.readValue(message, PaymentEvent.class);
         logger.info(String.format("#### -> Consumed message from payment topic in order service-> %s", paymentEvent.getOrderId()));
-
-
-
-        //String redisKey = "ORDER_" + paymentEvent.getOrderId();
-        // OrderState orderState = (OrderState) redisTemplate.opsForValue().get(redisKey);
-
+        // Add trace ID to MDC
+        String traceId = paymentEvent.getTraceId();
+        if (traceId != null) {
+            MDC.put("traceId", traceId);
+        }
         if ("PAYMENT_SUCCESS".equals(paymentEvent.getPaymentStatus())) {
             orderController.confirmOrder(paymentEvent.getOrderRequest(),paymentEvent.getSagaState());
-
         } else{
             orderController.rollbackOrder(paymentEvent.getOrderRequest(),paymentEvent.getSagaState());
-
         }
     }
 
