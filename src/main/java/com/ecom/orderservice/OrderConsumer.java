@@ -41,40 +41,13 @@ public class OrderConsumer
 
         if ("PAYMENT_SUCCESS".equals(paymentEvent.getPaymentStatus())) {
             orderController.confirmOrder(paymentEvent.getOrderRequest(),paymentEvent.getSagaState());
-          //   orderState.setOrderStatus("CONFIRMED");
-           /** sagaState.updateStepStatus("Order", "ORDER_CONFIRMED");
-            redisTemplate.opsForValue().set("ORDER_" + orderRequest.getOrderStatus(), sagaState); **/
 
-           //  redisTemplate.delete(redisKey); // Clean up after success
         } else{
             orderController.rollbackOrder(paymentEvent.getOrderRequest(),paymentEvent.getSagaState());
 
         }
-
-
-
-        /*** else {
-            // Retry or handle failure logic
-            orderState.setOrderStatus("RETRY");
-            // Optionally re-publish order event for retry
-        } **/
-
-       // redisTemplate.opsForValue().set(redisKey, orderState); // Update state
     }
-      /****  //analytics_counter.increment();
-        //Analytic datum =  mapper.readValue(message,Analytic.class);
-        logger.info(String.format("#### -> about to consume inventory topic"));
-        InventoryEvent inventoryEvent = mapper.readValue(message, InventoryEvent.class);
-        logger.info(String.format("#### -> Consumed message from inventory topic in order service-> %s", inventoryEvent.getOrderId()));
 
-        if ("ORDER_CREATED".equals(orderEvent.getEventType())) {
-            // Check product availability
-            invController.publishInventoryMessage(orderEvent.getRequest());
-        }
-        if ("INVENTORY_CONFIRMED".equals(event.getStatus())) {
-            kafkaTemplate.send("payment-events", event.getOrderId(),
-                    new PaymentEvent(event.getOrderId(), "PROCESS_PAYMENT"));
-        } ***/
       @KafkaListener(topics = "order-retry-topic", groupId = "ecom-order-service")
       public void consumeInterimResponseEvents(String message) throws IOException {
           logger.info(String.format("#### -> about to consume payment topic"));
@@ -106,7 +79,5 @@ public class OrderConsumer
           }
       }
 
-
-
-      }
+    }
 

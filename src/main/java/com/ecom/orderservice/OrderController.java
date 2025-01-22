@@ -14,10 +14,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
+import java.util.stream.Collectors;
 
 
 @RestController
@@ -29,6 +27,9 @@ public class OrderController
     OrderRepository orderRepository;
 
     @Autowired
+    OrderMapper orderMapper;
+
+    @Autowired
     Producer producer = new Producer();
 
     private final RedisTemplate<String, Object> redisTemplate;
@@ -36,25 +37,6 @@ public class OrderController
     public OrderController(RedisTemplate<String, Object> redisTemplate) {
         this.redisTemplate = redisTemplate;
     }
-
-    // @PostMapping("/placeorder")
-    /*** public ResponseEntity<String> placeOrder(@RequestBody OrderRequest request) throws JsonProcessingException {
-        // Create initial order
-        logger.info("Place order request: {}", request);
-        Order order = new Order(request.getOrderId(), request.getCustomerId(),
-                request.getProductId(), request.getQuantity(),"PENDING");
-
-        // Save order state in Redis
-        logger.info("Save order state in Redis");
-        redisTemplate.opsForValue().set("ORDER_" + request.getOrderId(), order);
-
-        // Publish order creation event
-        logger.info("Publish order creation event");
-        producer.publishOrderPlaceMessage(request);
-
-        logger.info("Order placed and processing initiated");
-        return ResponseEntity.ok("Order placed and processing initiated");
-    } ***/
 
 
     @PostMapping("/placeorder")
@@ -116,47 +98,6 @@ public class OrderController
             }
 
         }
-        //String sessionId = UUID.randomUUID().toString();
-       // SagaState sagaState = (SagaState) redisTemplate.opsForValue().get(sessionId);
-
-
-       // logger.info("Create initial order DB persistence with pending status");
-       // Order order = new Order(request.getOrderId(), request.getCustomerId(),
-         //       request.getProductId(), request.getQuantity(),"PENDING");
-       // orderRepository.save(order);
-      //  logger.info("Create initial order state");
-       // OrderState orderState = new OrderState(request.getOrderId(), "PENDING", new HashMap <String, String>(), 0);
-        //orderState.updateStepStatus("Inventory", "PENDING");
-        //orderState.updateStepStatus("Payment", "PENDING");
-
-        // Track order in Redis
-        /*** logger.info("Save order in Redis");
-        redisTemplate.opsForValue().set("ORDER_ID_" + request.getOrderId(), order);
-
-        logger.info("Save order state in Redis");
-       // redisTemplate.opsForValue().set("ORDER_" + request.getOrderId(), orderState);
-
-
-        // Store initial state in Redis
-        SagaState sagaState = new SagaState("ORDER_CREATED", request);
-        sagaState.updateStepStatus("Order","PENDING");
-        sagaState.updateStepStatus("Inventory", "PENDING");
-        sagaState.updateStepStatus("Payment", "PENDING");
-        redisTemplate.opsForValue().set(sessionId, sagaState);
-
-        // Set cookie
-        ResponseCookie cookie = ResponseCookie.from("sessionId", sessionId)
-                .httpOnly(true)
-                .path("/")
-                .build();
-        response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());***/
-
-
-
-        // Publish initial order creation event
-       /**** logger.info("Publish initial order creation event");
-        producer.publishOrderPlaceMessage(request);
-***/
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Retry failed for order ID: " + orderId);
 
     }
@@ -174,22 +115,6 @@ public class OrderController
             producer.publishOrderPlaceMessage(sagaState.getOrderRequest(), sagaState);
 
         }
-
-       /*** // Retry inventory check if not confirmed
-        if (!sagaState.is) {
-            kafkaTemplate.send("inventory-events", orderId, new OrderEvent(orderId, "RETRY_INVENTORY", sagaState.getOrderRequest()));
-            return false;
-        }
-
-        // Retry payment if not confirmed
-        if (!sagaState.isPaymentConfirmed()) {
-            kafkaTemplate.send("payment-events", orderId, new OrderEvent(orderId, "RETRY_PAYMENT", sagaState.getOrderRequest()));
-            return false;
-        }
-
-        // All steps successful
-        sagaState.setStatus("COMPLETED");
-        redisTemplate.opsForValue().set("ORDER_" + orderId, sagaState);***/
         return canRetry ;
     }
 
@@ -200,8 +125,6 @@ public class OrderController
         sagaState.updateStepStatus("Order", "ORDER_CONFIRMED");
         sagaState.setCurrentState("ORDER_CONFIRMED");
         redisTemplate.opsForValue().set("ORDER_" + orderRequest.getOrderId(), sagaState);
-
-     //   redisTemplate.opsForValue().set("ORDER_" + orderId, order);
     }
 
     public void rollbackOrder(OrderRequest orderRequest,SagaState sagaState) {
@@ -214,7 +137,6 @@ public class OrderController
             sagaState.setCurrentState("ORDER_FAILED");
         }
          // Persist failure
-
         redisTemplate.opsForValue().set("ORDER_" + orderRequest.getOrderId(), sagaState);
        // redisTemplate.delete("ORDER_" + orderRequest.getOrderId());
     }
@@ -232,8 +154,6 @@ public class OrderController
         orderRepository.save(order);
         logger.info(" product update completed successfully in productCatalog Table");
         logger.info(order.getOrderId()," initiating product topic");
-        //producer.pubUpdateProductDetailsMessage(order.getOrderStatus(), "PRODUCT DETAILS UPDATED SUCCESSFULLY");
-
         return ResponseEntity.ok("Details Updated Successfully");
     }
 
@@ -245,16 +165,42 @@ public class OrderController
     }
 
     @GetMapping("/getAll")
-    public ResponseEntity<List<Order>> getAllOrders() {
-        List<Order> orders = orderRepository.findAll();
+    public ResponseEntity<?> getAllOrders() {
+        try {
+            List<Order> orders = orderRepository.findAll();
 
-        if (orders.isEmpty()) {
-            // Return a 204 No Content response if no orders are found.
-            return ResponseEntity.noContent().build();
+            if (orders.isEmpty()) {
+                return ResponseEntity.status(HttpStatus.NO_CONTENT).body("No orders available.");
+            }
+
+            return ResponseEntity.ok(orders.stream()
+                    .map(orderMapper::toOrderView)
+                    .collect(Collectors.toList()));
+
+        } catch (Exception e) {
+            // Log the error (logging can be added here for production)
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("An error occurred while fetching orders: " + e.getMessage());
         }
+    }
 
-        // Return the list of orders with a 200 OK status.
-        return ResponseEntity.ok(orders);
+
+    @GetMapping("/all")
+    public List<OrderView> fetchAllOrders() {
+        try {
+            List<Order> orders = orderRepository.findAll();
+
+            if (orders.isEmpty()) {
+                return new ArrayList<>();
+            }
+
+            return orders.stream()
+                    .map(orderMapper::toOrderView)
+                    .collect(Collectors.toList());
+
+        } catch (Exception e) {
+            return new ArrayList<>();
+        }
     }
 
 }
